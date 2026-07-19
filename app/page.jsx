@@ -43,6 +43,7 @@ const programs = [
 export default function Page() {
   const [role, setRole] = useState("student");
   const [studentAuthMode, setStudentAuthMode] = useState("login");
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [user, setUser] = useState(null);
@@ -68,6 +69,7 @@ export default function Page() {
     [pendingApplyProgramId]
   );
   const isTeacher = user && user.email?.toLowerCase() === teacherEmail.toLowerCase();
+  const approvedApplications = applications.filter((item) => item.approved);
 
   useEffect(() => {
     document.body.classList.toggle("auth-mode", !user);
@@ -104,7 +106,7 @@ export default function Page() {
     const teacher = sessionUser.email?.toLowerCase() === teacherEmail.toLowerCase();
     const applicationQuery = supabase
       .from("program_applications")
-      .select("program_id, student_email, created_at")
+      .select("*")
       .order("created_at", { ascending: true });
     const ratingQuery = supabase
       .from("program_ratings")
@@ -147,9 +149,22 @@ export default function Page() {
 
     if (role === "student") {
       if (studentAuthMode === "signup") {
+        const cleanName = fullName.trim();
+
+        if (!cleanName) {
+          setMessage("Please enter the student's full name.");
+          setIsError(true);
+          return;
+        }
+
         const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
           email: cleanEmail,
-          password
+          password,
+          options: {
+            data: {
+              full_name: cleanName
+            }
+          }
         });
 
         if (signUpError) {
@@ -216,6 +231,16 @@ export default function Page() {
     return applications.some((item) => item.program_id === programId && item.student_email === user?.email);
   }
 
+  function applicationFor(programId) {
+    return applications.find((item) => item.program_id === programId && item.student_email === user?.email);
+  }
+
+  function applicationStatus(programId) {
+    const application = applicationFor(programId);
+    if (!application) return "Apply now";
+    return application.approved ? "Approved" : "Pending approval";
+  }
+
   function seatText(program) {
     const signedUp = applicationsFor(program.id).length;
     return `${Math.max(program.seats - signedUp, 0)} of ${program.seats} open`;
@@ -236,11 +261,25 @@ export default function Page() {
       return;
     }
 
-    const { error } = await supabase.from("program_applications").insert({
+    const studentName = user.user_metadata?.full_name || fullName.trim() || user.email;
+    const applicationPayload = {
       program_id: programId,
       student_id: user.id,
-      student_email: user.email
-    });
+      student_email: user.email,
+      student_name: studentName,
+      approved: false
+    };
+    let { error } = await supabase.from("program_applications").insert(applicationPayload);
+
+    if (error?.code === "42703") {
+      const { error: legacyError } = await supabase.from("program_applications").insert({
+        program_id: programId,
+        student_id: user.id,
+        student_email: user.email
+      });
+      error = legacyError;
+    }
+
     if (error) {
       if (error.code === "23505") {
         setPendingApplyProgramId(null);
@@ -254,6 +293,26 @@ export default function Page() {
     }
     setPendingApplyProgramId(null);
     setActiveProgramId(programId);
+    await loadData(user);
+  }
+
+  async function approveApplication(application) {
+    if (!supabase || !isTeacher) return;
+
+    const { error } = await supabase
+      .from("program_applications")
+      .update({
+        approved: true,
+        approved_at: new Date().toISOString()
+      })
+      .eq("id", application.id);
+
+    if (error) {
+      setMessage("Approval needs the updated Supabase policy. Run supabase/schema.sql in the SQL Editor, then try again.");
+      setIsError(true);
+      return;
+    }
+
     await loadData(user);
   }
 
@@ -346,6 +405,12 @@ export default function Page() {
                 Email
                 <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder={role === "teacher" ? teacherEmail : "student@example.com"} required />
               </label>
+              {role === "student" && studentAuthMode === "signup" && (
+                <label>
+                  Full name
+                  <input type="text" value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Student full name" required />
+                </label>
+              )}
               <label>
                 Password
                 <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter password" required />
@@ -390,7 +455,7 @@ export default function Page() {
                       <img src={program.image} alt="" />
                       <div className="program-row-copy">
                         <div className="tags compact-tags">
-                          <span className="green-tag">{hasApplied(program.id) ? "Applied" : program.status}</span>
+                          <span className="green-tag">{applicationStatus(program.id)}</span>
                           <span>{program.sessions}</span>
                           <span>{program.time}</span>
                         </div>
@@ -434,10 +499,14 @@ export default function Page() {
                   </div>
                 </article>
                 <article className="summary-card">
-                  <span className="summary-icon">5</span>
+                  <span className="summary-icon">{approvedApplications.length}</span>
                   <div>
-                    <strong>Ratings after completion</strong>
-                    <p>Students can rate a program from the program detail popup after finishing.</p>
+                    <strong>Notifications</strong>
+                    <p>
+                      {approvedApplications.length
+                        ? `You're in for ${programs.find((program) => program.id === approvedApplications[0].program_id)?.title || "your program"}.`
+                        : "Approved applications will show here."}
+                    </p>
                   </div>
                 </article>
               </aside>
@@ -467,6 +536,7 @@ export default function Page() {
                         <div className="program-row-copy">
                           <div className="tags compact-tags">
                             <span className="green-tag">{roster.length} applied</span>
+                            <span>{roster.filter((student) => student.approved).length} approved</span>
                             <span>{averageRating(program.id)}</span>
                           </div>
                           <h2>{program.title}</h2>
@@ -508,7 +578,7 @@ export default function Page() {
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modalTitle" onMouseDown={(event) => event.target === event.currentTarget && setActiveProgramId(null)}>
           <div className="modal">
             <button className="close-button" type="button" aria-label="Close" onClick={() => setActiveProgramId(null)}>x</button>
-            <span className="status-badge">{hasApplied(activeProgram.id) ? "Applied" : activeProgram.status}</span>
+            <span className="status-badge">{applicationStatus(activeProgram.id)}</span>
             <div className="modal-head">
               <img className="modal-image" src={activeProgram.image} alt="" />
               <div>
@@ -587,8 +657,17 @@ export default function Page() {
               {applicationsFor(rosterProgram.id).length ? (
                 applicationsFor(rosterProgram.id).map((student) => (
                   <div className="roster-item" key={`${student.program_id}-${student.student_email}`}>
-                    <strong>{student.student_email}</strong>
-                    <span>Applied</span>
+                    <div>
+                      <strong>{student.student_name || student.student_email}</strong>
+                      <span>{student.student_email}</span>
+                    </div>
+                    {student.approved ? (
+                      <span>Approved</span>
+                    ) : (
+                      <button className="primary-button" type="button" onClick={() => approveApplication(student)}>
+                        Approve
+                      </button>
+                    )}
                   </div>
                 ))
               ) : (
