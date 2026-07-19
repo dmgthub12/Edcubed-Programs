@@ -40,6 +40,22 @@ const programs = [
   }
 ];
 
+const statusOptions = ["under_review", "approved", "waitlisted", "not_accepted"];
+
+function statusLabel(status) {
+  const labels = {
+    under_review: "Under review",
+    approved: "Approved",
+    waitlisted: "Waitlisted",
+    not_accepted: "Not accepted"
+  };
+  return labels[status] || "Under review";
+}
+
+function normalizedStatus(application) {
+  return application?.status || (application?.approved ? "approved" : "under_review");
+}
+
 export default function Page() {
   const [role, setRole] = useState("student");
   const [studentAuthMode, setStudentAuthMode] = useState("login");
@@ -55,6 +71,8 @@ export default function Page() {
   const [pendingApplyProgramId, setPendingApplyProgramId] = useState(null);
   const [teacherOpen, setTeacherOpen] = useState(false);
   const [rosterProgramId, setRosterProgramId] = useState(null);
+  const [expandedStudentId, setExpandedStudentId] = useState(null);
+  const [noteDrafts, setNoteDrafts] = useState({});
 
   const activeProgram = useMemo(
     () => programs.find((program) => program.id === activeProgramId),
@@ -69,7 +87,7 @@ export default function Page() {
     [pendingApplyProgramId]
   );
   const isTeacher = user && user.email?.toLowerCase() === teacherEmail.toLowerCase();
-  const approvedApplications = applications.filter((item) => item.approved);
+  const approvedApplications = applications.filter((item) => normalizedStatus(item) === "approved");
 
   useEffect(() => {
     document.body.classList.toggle("auth-mode", !user);
@@ -238,7 +256,7 @@ export default function Page() {
   function applicationStatus(programId) {
     const application = applicationFor(programId);
     if (!application) return "Apply now";
-    return application.approved ? "Approved" : "Pending approval";
+    return statusLabel(normalizedStatus(application));
   }
 
   function seatText(program) {
@@ -267,7 +285,8 @@ export default function Page() {
       student_id: user.id,
       student_email: user.email,
       student_name: studentName,
-      approved: false
+      approved: false,
+      status: "under_review"
     };
     let { error } = await supabase.from("program_applications").insert(applicationPayload);
 
@@ -297,23 +316,55 @@ export default function Page() {
   }
 
   async function approveApplication(application) {
+    await updateApplicationStatus(application, "approved");
+  }
+
+  async function updateApplicationStatus(application, status) {
     if (!supabase || !isTeacher) return;
 
     const { error } = await supabase
       .from("program_applications")
       .update({
-        approved: true,
-        approved_at: new Date().toISOString()
+        status,
+        approved: status === "approved",
+        approved_at: status === "approved" ? new Date().toISOString() : null
       })
       .eq("id", application.id);
 
     if (error) {
-      setMessage("Approval needs the updated Supabase policy. Run supabase/schema.sql in the SQL Editor, then try again.");
+      setMessage("Status updates need the updated Supabase policy. Run supabase/schema.sql in the SQL Editor, then try again.");
       setIsError(true);
       return;
     }
 
     await loadData(user);
+  }
+
+  async function saveStudentNotes(application) {
+    if (!supabase || !isTeacher) return;
+
+    const { error } = await supabase
+      .from("program_applications")
+      .update({
+        teacher_notes: noteDrafts[application.id] ?? application.teacher_notes ?? ""
+      })
+      .eq("id", application.id);
+
+    if (error) {
+      setMessage("Notes need the updated Supabase policy. Run supabase/schema.sql in the SQL Editor, then try again.");
+      setIsError(true);
+      return;
+    }
+
+    await loadData(user);
+  }
+
+  function toggleStudentNotes(student) {
+    setExpandedStudentId((currentId) => (currentId === student.id ? null : student.id));
+    setNoteDrafts((drafts) => ({
+      ...drafts,
+      [student.id]: drafts[student.id] ?? student.teacher_notes ?? ""
+    }));
   }
 
   function requestApply(programId) {
@@ -522,7 +573,7 @@ export default function Page() {
                   <div>
                     <p className="eyebrow">Teacher portal</p>
                     <h1 id="teacherTitle">Program Rosters</h1>
-                    <p className="muted">Program descriptions stay hidden here. Open a roster to see student emails.</p>
+                    <p className="muted">Click a student name to open notes and status controls.</p>
                   </div>
                   <button className="ghost-button" type="button" onClick={logout}>Sign out</button>
                 </div>
@@ -536,11 +587,12 @@ export default function Page() {
                         <div className="program-row-copy">
                           <div className="tags compact-tags">
                             <span className="green-tag">{roster.length} applied</span>
-                            <span>{roster.filter((student) => student.approved).length} approved</span>
+                            <span>{roster.filter((student) => normalizedStatus(student) === "under_review").length} under review</span>
+                            <span>{roster.filter((student) => normalizedStatus(student) === "approved").length} approved</span>
                             <span>{averageRating(program.id)}</span>
                           </div>
                           <h2>{program.title}</h2>
-                          <p>{roster.length ? "Open the roster to see student emails." : "No applications yet."}</p>
+                          <p>{roster.length ? "Open the roster to see student details." : "No applications yet."}</p>
                         </div>
                         <div className="row-actions">
                           <button className="primary-button" type="button" onClick={() => setRosterProgramId(program.id)}>
@@ -565,7 +617,7 @@ export default function Page() {
                   <span className="summary-icon">@</span>
                   <div>
                     <strong>Roster access</strong>
-                    <p>Teachers see only the program names and applicant emails.</p>
+                    <p>Teachers see student names, emails, statuses, and private notes.</p>
                   </div>
                 </article>
               </aside>
@@ -657,16 +709,44 @@ export default function Page() {
               {applicationsFor(rosterProgram.id).length ? (
                 applicationsFor(rosterProgram.id).map((student) => (
                   <div className="roster-item" key={`${student.program_id}-${student.student_email}`}>
-                    <div>
-                      <strong>{student.student_name || student.student_email}</strong>
-                      <span>{student.student_email}</span>
+                    <div className="roster-main" role="button" tabIndex={0} onClick={() => toggleStudentNotes(student)} onKeyDown={(event) => event.key === "Enter" && toggleStudentNotes(student)}>
+                      <div>
+                        <strong>{student.student_name || student.student_email}</strong>
+                        <span>{student.student_email}</span>
+                      </div>
+                      <span>{statusLabel(normalizedStatus(student))}</span>
                     </div>
-                    {student.approved ? (
-                      <span>Approved</span>
-                    ) : (
+                    {normalizedStatus(student) !== "approved" && (
                       <button className="primary-button" type="button" onClick={() => approveApplication(student)}>
                         Approve
                       </button>
+                    )}
+                    {expandedStudentId === student.id && (
+                      <div className="student-notes-panel">
+                        <div className="status-controls" aria-label="Application status">
+                          {statusOptions.map((status) => (
+                            <button
+                              className={normalizedStatus(student) === status ? "active" : ""}
+                              key={status}
+                              type="button"
+                              onClick={() => updateApplicationStatus(student, status)}
+                            >
+                              {statusLabel(status)}
+                            </button>
+                          ))}
+                        </div>
+                        <label>
+                          Teacher notes
+                          <textarea
+                            value={noteDrafts[student.id] ?? student.teacher_notes ?? ""}
+                            onChange={(event) => setNoteDrafts((drafts) => ({ ...drafts, [student.id]: event.target.value }))}
+                            placeholder="Add private notes about this student..."
+                          />
+                        </label>
+                        <button className="outline-button" type="button" onClick={() => saveStudentNotes(student)}>
+                          Save notes
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))
