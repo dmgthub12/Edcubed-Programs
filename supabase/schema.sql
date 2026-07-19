@@ -9,6 +9,8 @@ create table if not exists public.program_applications (
   student_name text,
   approved boolean not null default false,
   approved_at timestamptz,
+  status text not null default 'under_review' check (status in ('under_review', 'approved', 'waitlisted', 'not_accepted')),
+  teacher_notes text,
   created_at timestamptz not null default now(),
   unique (program_id, student_id)
 );
@@ -36,6 +38,23 @@ add column if not exists approved boolean not null default false;
 alter table public.program_applications
 add column if not exists approved_at timestamptz;
 
+alter table public.program_applications
+add column if not exists status text not null default 'under_review';
+
+alter table public.program_applications
+add column if not exists teacher_notes text;
+
+update public.program_applications
+set status = case when approved then 'approved' else 'under_review' end
+where status is null;
+
+alter table public.program_applications
+drop constraint if exists program_applications_status_check;
+
+alter table public.program_applications
+add constraint program_applications_status_check
+check (status in ('under_review', 'approved', 'waitlisted', 'not_accepted'));
+
 drop policy if exists "students can view own applications" on public.program_applications;
 drop policy if exists "students can apply to programs" on public.program_applications;
 drop policy if exists "students can update own applications" on public.program_applications;
@@ -50,12 +69,6 @@ using (auth.uid() = student_id);
 create policy "students can apply to programs"
 on public.program_applications
 for insert
-with check (auth.uid() = student_id);
-
-create policy "students can update own applications"
-on public.program_applications
-for update
-using (auth.uid() = student_id)
 with check (auth.uid() = student_id);
 
 create policy "teacher can view all applications"
