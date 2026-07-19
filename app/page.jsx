@@ -230,15 +230,24 @@ export default function Page() {
 
   async function applyToProgram(programId) {
     if (!user || !supabase) return;
-    const { error } = await supabase.from("program_applications").upsert(
-      {
-        program_id: programId,
-        student_id: user.id,
-        student_email: user.email
-      },
-      { onConflict: "program_id,student_id" }
-    );
+    if (hasApplied(programId)) {
+      setPendingApplyProgramId(null);
+      setActiveProgramId(programId);
+      return;
+    }
+
+    const { error } = await supabase.from("program_applications").insert({
+      program_id: programId,
+      student_id: user.id,
+      student_email: user.email
+    });
     if (error) {
+      if (error.code === "23505") {
+        setPendingApplyProgramId(null);
+        setActiveProgramId(programId);
+        await loadData(user);
+        return;
+      }
       setMessage(error.message);
       setIsError(true);
       return;
