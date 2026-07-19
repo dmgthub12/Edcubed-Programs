@@ -6,6 +6,9 @@ create table if not exists public.program_applications (
   program_id text not null check (program_id in ('resume', 'essays')),
   student_id uuid not null references auth.users(id) on delete cascade,
   student_email text not null,
+  student_name text,
+  approved boolean not null default false,
+  approved_at timestamptz,
   created_at timestamptz not null default now(),
   unique (program_id, student_id)
 );
@@ -24,9 +27,19 @@ create table if not exists public.program_ratings (
 alter table public.program_applications enable row level security;
 alter table public.program_ratings enable row level security;
 
+alter table public.program_applications
+add column if not exists student_name text;
+
+alter table public.program_applications
+add column if not exists approved boolean not null default false;
+
+alter table public.program_applications
+add column if not exists approved_at timestamptz;
+
 drop policy if exists "students can view own applications" on public.program_applications;
 drop policy if exists "students can apply to programs" on public.program_applications;
 drop policy if exists "students can update own applications" on public.program_applications;
+drop policy if exists "teacher can approve applications" on public.program_applications;
 drop policy if exists "teacher can view all applications" on public.program_applications;
 
 create policy "students can view own applications"
@@ -49,6 +62,12 @@ create policy "teacher can view all applications"
 on public.program_applications
 for select
 using (lower(auth.jwt() ->> 'email') = lower('John.ssmith2745@gmail.com'));
+
+create policy "teacher can approve applications"
+on public.program_applications
+for update
+using (lower(auth.jwt() ->> 'email') = lower('John.ssmith2745@gmail.com'))
+with check (lower(auth.jwt() ->> 'email') = lower('John.ssmith2745@gmail.com'));
 
 drop policy if exists "students can view own ratings" on public.program_ratings;
 drop policy if exists "students can rate programs" on public.program_ratings;
