@@ -26,8 +26,17 @@ create table if not exists public.program_ratings (
   unique (program_id, student_id)
 );
 
+create table if not exists public.program_meeting_info (
+  program_id text primary key check (program_id in ('resume', 'essays')),
+  meet_url text,
+  meet_code text,
+  homework text,
+  updated_at timestamptz not null default now()
+);
+
 alter table public.program_applications enable row level security;
 alter table public.program_ratings enable row level security;
+alter table public.program_meeting_info enable row level security;
 
 alter table public.program_applications
 add column if not exists student_name text;
@@ -78,6 +87,40 @@ using (lower(auth.jwt() ->> 'email') = lower('John.ssmith2745@gmail.com'));
 
 create policy "teacher can approve applications"
 on public.program_applications
+for update
+using (lower(auth.jwt() ->> 'email') = lower('John.ssmith2745@gmail.com'))
+with check (lower(auth.jwt() ->> 'email') = lower('John.ssmith2745@gmail.com'));
+
+drop policy if exists "approved students can view meeting info" on public.program_meeting_info;
+drop policy if exists "teacher can view meeting info" on public.program_meeting_info;
+drop policy if exists "teacher can insert meeting info" on public.program_meeting_info;
+drop policy if exists "teacher can update meeting info" on public.program_meeting_info;
+
+create policy "approved students can view meeting info"
+on public.program_meeting_info
+for select
+using (
+  exists (
+    select 1
+    from public.program_applications application
+    where application.program_id = program_meeting_info.program_id
+      and application.student_id = auth.uid()
+      and (application.approved = true or application.status = 'approved')
+  )
+);
+
+create policy "teacher can view meeting info"
+on public.program_meeting_info
+for select
+using (lower(auth.jwt() ->> 'email') = lower('John.ssmith2745@gmail.com'));
+
+create policy "teacher can insert meeting info"
+on public.program_meeting_info
+for insert
+with check (lower(auth.jwt() ->> 'email') = lower('John.ssmith2745@gmail.com'));
+
+create policy "teacher can update meeting info"
+on public.program_meeting_info
 for update
 using (lower(auth.jwt() ->> 'email') = lower('John.ssmith2745@gmail.com'))
 with check (lower(auth.jwt() ->> 'email') = lower('John.ssmith2745@gmail.com'));
