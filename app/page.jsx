@@ -23,7 +23,7 @@ const programs = [
     sessions: "3 live sessions",
     time: "3 hours per day",
     seats: 8,
-    image: "https://images.unsplash.com/photo-1586281380349-632531db7ed4?auto=format&fit=crop&w=900&q=80",
+    image: "/programs/resume-builder-cartoon.png",
     tags: ["Resumes", "Career Skills", "Portfolio"]
   },
   {
@@ -36,7 +36,7 @@ const programs = [
     sessions: "10 live sessions",
     time: "3 hours per day",
     seats: 10,
-    image: "https://images.unsplash.com/photo-1455390582262-044cdead277a?auto=format&fit=crop&w=900&q=80",
+    image: "/programs/college-essay-cartoon.png",
     tags: ["College Essays", "Writing", "Admissions"]
   }
 ];
